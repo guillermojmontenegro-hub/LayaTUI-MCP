@@ -126,37 +126,36 @@ def _probability(value):
 
 
 def answer_summary(result, questions=None):
-    """Keep typed answers complete in a few selectable text lines per question."""
+    """Show labeled decisions and compact, readable option lists."""
     questions = questions if isinstance(questions, dict) else {}
-    rows = []
+    rows = ["Answers:"]
     for name, answer in result.get("answers", {}).items():
         if not isinstance(answer, dict):
-            rows.append(f"{name}: {_display(answer)}")
+            rows.append(f"  {name}: {_display(answer)}")
             continue
         spec = questions.get(name, {})
         spec = spec if isinstance(spec, dict) else {}
         kind = answer.get("type") or spec.get("type") or "unknown"
-        heading = f"{name} [{kind}]"
+        heading = f"  {name} [{kind}]"
         if spec.get("instructions"):
             heading += f" — {spec['instructions']}"
         rows.append(heading)
         used = {"type"}
-        values = []
-        options = []
+        details = []
 
         if kind == "choice" and "choice" in answer:
             chosen = str(answer["choice"])
             criteria = spec.get("criteria") if isinstance(spec.get("criteria"), dict) else {}
             probabilities = answer.get("probabilities") or {}
             probabilities = probabilities if isinstance(probabilities, dict) else {}
-            values.append(f"choice={chosen}")
+            rows.append(f"    Selected: {chosen}")
             labels = list(dict.fromkeys([*criteria, *probabilities]))
             for label in labels:
                 detail = criteria.get(label)
-                option = f"{label}" + (f" ({_display(detail)})" if detail not in (None, "") else "")
+                option = f"      {label}" + (f" — {_display(detail)}" if detail not in (None, "") else "")
                 if label in probabilities:
-                    option += f"={_probability(probabilities[label])}"
-                options.append(("*" if label == chosen else "") + option)
+                    option += f"  p={_probability(probabilities[label])}"
+                rows.append(option)
             used.update(("choice", "probabilities"))
 
         elif kind == "score" and "score" in answer:
@@ -165,46 +164,45 @@ def answer_summary(result, questions=None):
             probabilities = answer.get("probabilities") or {}
             probabilities = probabilities if isinstance(probabilities, dict) else {}
             levels = list(dict.fromkeys([*(str(i) for i in range(len(rubric))), *legend, *probabilities]))
-            values.append(f"score={_display(answer['score'])}" +
-                          (f" (0–{len(levels) - 1})" if levels else ""))
+            rows.append(f"    Expected score: {_display(answer['score'])}" +
+                        (f" (0–{len(levels) - 1})" if levels else ""))
             for level in levels:
                 description = legend.get(level)
                 if description is None and level.isdigit() and int(level) < len(rubric):
                     description = rubric[int(level)]
-                option = f"{level}" + (f" ({_display(description)})" if description not in (None, "") else "")
+                option = f"      {level}" + (f" — {_display(description)}" if description not in (None, "") else "")
                 if level in probabilities:
-                    option += f"={_probability(probabilities[level])}"
-                options.append(option)
+                    option += f"  p={_probability(probabilities[level])}"
+                rows.append(option)
             used.update(("score", "legend", "probabilities"))
 
         elif kind == "noul" and "noul" in answer:
             value = answer["noul"]
-            values.append(f"P(true)={_probability(value)}")
+            probabilities = [f"P(true): {_probability(value)}"]
             if isinstance(value, (int, float)) and not isinstance(value, bool):
-                values.append(f"P(false)={_probability(1 - value)}")
+                probabilities.append(f"P(false): {_probability(1 - value)}")
+            rows.append("    " + "  |  ".join(probabilities))
             criteria = spec.get("criteria") if isinstance(spec.get("criteria"), dict) else {}
             labels = spec.get("labels") if isinstance(spec.get("labels"), dict) else {}
             for key in ("false", "true"):
                 if key in criteria or key in labels:
-                    option = key
+                    option = f"      {key}"
                     if key in labels:
-                        option += f" ({_display(labels[key])})"
+                        option += f" — {_display(labels[key])}"
                     if key in criteria:
                         option += f": {_display(criteria[key])}"
-                    options.append(option)
+                    rows.append(option)
             used.add("noul")
 
         for key in ("confidence", "answer_confidence", "action"):
             if key in answer:
-                values.append(f"{key}={_display(answer[key])}")
+                details.append(f"{key}: {_display(answer[key])}")
                 used.add(key)
         for key, value in answer.items():
             if key not in used:
-                values.append(f"{key}={_display(value)}")
-        if values:
-            rows.append("  " + " | ".join(values))
-        if options:
-            rows.append("  " + " · ".join(options))
+                details.append(f"{key}: {_display(value)}")
+        if details:
+            rows.append("    " + "  |  ".join(details))
     return "\n".join(rows)
 
 
