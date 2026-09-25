@@ -53,6 +53,23 @@ class RequestTests(unittest.TestCase):
         self.assertIn("1 — high  p=0.4000", summary)
         self.assertIn("extra_metric: kept", summary)
 
+    def test_selected_rows_follow_most_likely_options(self):
+        result = {"answers": {
+            "domain": {"type": "choice", "choice": "code",
+                       "probabilities": {"code": 0.9, "math": 0.1}},
+            "difficulty": {"type": "score", "score": 1.1,
+                           "probabilities": {"0": 0.1, "1": 0.7, "2": 0.2}},
+            "safe": {"type": "noul", "noul": 0.2},
+        }}
+        questions = {"domain": {"criteria": {"code": "programming", "math": "calculation"}},
+                     "difficulty": {"criteria": ["easy", "medium", "hard"]},
+                     "safe": {"criteria": {"false": "unsafe", "true": "safe"}}}
+        selected_rows = set()
+        lines = answer_summary(result, questions, selected_rows).splitlines()
+        self.assertEqual({lines[index].strip() for index in selected_rows},
+                         {"code — programming  p=0.9000", "1 — medium  p=0.7000",
+                          "false: unsafe"})
+
     def test_desktop_clipboard_writer(self):
         with patch("laya_tools.tui.clipboard_commands", return_value=[("xclip", "-selection", "clipboard")]), \
              patch("laya_tools.tui.shutil.which", return_value="/usr/bin/xclip"), \
@@ -94,21 +111,28 @@ class RequestTests(unittest.TestCase):
 
 
 class AppTests(unittest.IsolatedAsyncioTestCase):
-    async def test_selected_line_has_color_only_in_summary(self):
+    async def test_summary_colors_instructions_selection_and_general_info(self):
         app = LayaTUI()
         async with app.run_test(size=(100, 30)) as pilot:
             app.finish_request({"answers": {"domain": {"type": "choice", "choice": "code"}}},
                                None, {"domain": {"type": "choice", "instructions": "Pick a domain",
                                                  "criteria": {"code": "programming"}}})
             results = app.query_one("#results", ResultTextArea)
-            selected_index = results.text.splitlines().index("    Selected: code")
-            selected_line = results.get_line(selected_index)
-            self.assertEqual(selected_line.plain, "    Selected: code")
-            self.assertTrue(any("bold" in str(span.style) for span in selected_line.spans))
+            lines = results.text.splitlines()
+            selected_index = lines.index("    Selected: code")
+            option_index = lines.index("      code — programming")
+            heading_index = lines.index("  domain [choice] — Pick a domain")
+            general_style = results.get_line(0).spans[0].style
+            heading = results.get_line(heading_index)
+            instruction_style = heading.spans[-1].style
+            selected_style = results.get_line(selected_index).spans[0].style
+            self.assertEqual(results.get_line(option_index).spans[0].style, selected_style)
+            self.assertEqual(len({str(general_style), str(instruction_style), str(selected_style)}), 3)
+            self.assertEqual(results.get_line(lines.index("Answers:")).spans[0].style, general_style)
 
             app.query_one("#view", Select).value = "json"
             await pilot.pause()
-            self.assertFalse(results.highlight_selected)
+            self.assertFalse(results.highlight_summary)
             self.assertTrue(all(not results.get_line(index).spans
                                 for index in range(len(results.text.splitlines()))))
 

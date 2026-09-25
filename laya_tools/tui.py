@@ -125,9 +125,10 @@ def _probability(value):
     return f"{value:.4f}" if isinstance(value, (float, int)) and not isinstance(value, bool) else _display(value)
 
 
-def answer_summary(result, questions=None):
+def answer_summary(result, questions=None, selected_rows=None):
     """Show labeled decisions and compact, readable option lists."""
     questions = questions if isinstance(questions, dict) else {}
+    selected_rows = selected_rows if selected_rows is not None else set()
     rows = ["Answers:"]
     for name, answer in result.get("answers", {}).items():
         if not isinstance(answer, dict):
@@ -155,6 +156,8 @@ def answer_summary(result, questions=None):
                 option = f"      {label}" + (f" — {_display(detail)}" if detail not in (None, "") else "")
                 if label in probabilities:
                     option += f"  p={_probability(probabilities[label])}"
+                if label == chosen:
+                    selected_rows.add(len(rows))
                 rows.append(option)
             used.update(("choice", "probabilities"))
 
@@ -163,6 +166,9 @@ def answer_summary(result, questions=None):
             legend = answer.get("legend") if isinstance(answer.get("legend"), dict) else {}
             probabilities = answer.get("probabilities") or {}
             probabilities = probabilities if isinstance(probabilities, dict) else {}
+            numeric_probabilities = {str(level): probability for level, probability in probabilities.items()
+                                     if isinstance(probability, (int, float)) and not isinstance(probability, bool)}
+            most_likely = max(numeric_probabilities, key=numeric_probabilities.get) if numeric_probabilities else None
             levels = list(dict.fromkeys([*(str(i) for i in range(len(rubric))), *legend, *probabilities]))
             rows.append(f"    Expected score: {_display(answer['score'])}" +
                         (f" (0–{len(levels) - 1})" if levels else ""))
@@ -173,6 +179,8 @@ def answer_summary(result, questions=None):
                 option = f"      {level}" + (f" — {_display(description)}" if description not in (None, "") else "")
                 if level in probabilities:
                     option += f"  p={_probability(probabilities[level])}"
+                if level == most_likely:
+                    selected_rows.add(len(rows))
                 rows.append(option)
             used.update(("score", "legend", "probabilities"))
 
@@ -191,6 +199,8 @@ def answer_summary(result, questions=None):
                         option += f" — {_display(labels[key])}"
                     if key in criteria:
                         option += f": {_display(criteria[key])}"
+                    if isinstance(value, (int, float)) and not isinstance(value, bool) and key == ("true" if value >= 0.5 else "false"):
+                        selected_rows.add(len(rows))
                     rows.append(option)
             used.add("noul")
 
@@ -240,17 +250,46 @@ class ResizeHandle(Static):
 
 
 class ResultTextArea(TextArea):
-    """Color selected decisions while keeping the result selectable and copyable."""
+    """Color summary roles while keeping the result selectable and copyable."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.highlight_selected = False
+        self.highlight_summary = False
+        self.selected_rows = set()
 
     def get_line(self, line_index: int):
         line = super().get_line(line_index)
-        if self.highlight_selected and line.plain.startswith("    Selected: "):
-            color = self.app.theme_variables.get("success", "#00af87")
-            line.stylize(f"bold {color}", 4, len(line))
+        if not self.highlight_summary:
+            return line
+        general = self.app.theme_variables.get("primary", "#5fafff")
+        instruction = self.app.theme_variables.get("warning", "#ffaf00")
+        selected = self.app.theme_variables.get("success", "#00af87")
+        content = line.plain
+        if line_index in self.selected_rows or content.startswith("    Selected: "):
+            line.stylize(f"bold {selected}", len(content) - len(content.lstrip()), len(line))
+        elif content.startswith("  ") and " [" in content and "]" in content:
+            separator = content.find(" — ", content.find("]"))
+            if separator >= 0:
+                line.stylize(f"bold {general}", 2, separator)
+                line.stylize(f"bold {instruction}", separator + 3, len(line))
+            else:
+                line.stylize(f"bold {general}", 2, len(line))
+        elif content.startswith("    P(true): ") and "  |  P(false): " in content:
+            divider = content.index("  |  P(false): ")
+            line.stylize(general, 4, len(line))
+            try:
+                true_probability = float(content.split("P(true): ", 1)[1].split(" ", 1)[0])
+            except ValueError:
+                pass
+            else:
+                if true_probability >= 0.5:
+                    line.stylize(f"bold {selected}", 4, divider)
+                else:
+                    line.stylize(f"bold {selected}", divider + 5, len(line))
+        elif content.startswith(("Result ", "Routing:", "Answers:", "Meta:")) or (
+            content.startswith("    ") and not content.startswith("      ")
+        ):
+            line.stylize(f"bold {general}", len(content) - len(content.lstrip()), len(line))
         return line
 
 
@@ -431,6 +470,7 @@ class LayaTUI(App):
 
     def show_history(self):
         lines = []
+        selected_rows = set()
         raw = self.query_one("#view", Select).value == "json"
         for index, result in enumerate(self.history, 1):
             lines.append("Result %d" % index)
@@ -444,7 +484,10 @@ class LayaTUI(App):
                     f"{key}={_display(value)}" for key, value in routing.items()))
             if result.get("answers"):
                 questions = self.question_history[index - 1] if index <= len(self.question_history) else {}
-                lines.append(answer_summary(result, questions))
+                answer_rows = set()
+                summary = answer_summary(result, questions, answer_rows)
+                selected_rows.update(len(lines) + row for row in answer_rows)
+                lines.extend(summary.splitlines())
             metadata = [(key, value) for key, value in result.items()
                         if key not in ("routing", "answers")]
             if metadata:
@@ -452,7 +495,8 @@ class LayaTUI(App):
                     f"{key}={_display(value)}" for key, value in metadata))
             lines.append("")
         results = self.query_one("#results", ResultTextArea)
-        results.highlight_selected = not raw
+        results.highlight_summary = not raw
+        results.selected_rows = selected_rows
         results.text = "\n".join(lines).rstrip()
 
     def action_clear(self):
