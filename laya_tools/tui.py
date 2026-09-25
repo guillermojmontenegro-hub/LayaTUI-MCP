@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -286,7 +287,7 @@ class ResultTextArea(TextArea):
                     line.stylize(f"bold {selected}", 4, divider)
                 else:
                     line.stylize(f"bold {selected}", divider + 5, len(line))
-        elif content.startswith(("Result ", "Routing:", "Answers:", "Meta:")) or (
+        elif content.startswith(("Result ", "Routing:", "Answers:", "Meta:", "Response time:")) or (
             content.startswith("    ") and not content.startswith("      ")
         ):
             line.stylize(f"bold {general}", len(content) - len(content.lstrip()), len(line))
@@ -446,12 +447,14 @@ class LayaTUI(App):
 
     @work(thread=True)
     def execute_request(self, mode, device, state, questions, options) -> None:
+        started = time.perf_counter()
         try:
             if self.router is None or getattr(self, "_router_device", None) != device:
                 router = self.router_factory(device=device)
                 self.router = router
                 self._router_device = device
             result = run_request(self.router, mode, state, questions, options)
+            result = {**result, "response_time_ms": round((time.perf_counter() - started) * 1000, 3)}
         except Exception as error:
             self.call_from_thread(self.finish_request, None, str(error), questions)
         else:
@@ -489,10 +492,12 @@ class LayaTUI(App):
                 selected_rows.update(len(lines) + row for row in answer_rows)
                 lines.extend(summary.splitlines())
             metadata = [(key, value) for key, value in result.items()
-                        if key not in ("routing", "answers")]
+                        if key not in ("routing", "answers", "response_time_ms")]
             if metadata:
                 lines.append("Meta: " + " | ".join(
                     f"{key}={_display(value)}" for key, value in metadata))
+            if "response_time_ms" in result:
+                lines.append(f"Response time: {_display(result['response_time_ms'])} ms")
             lines.append("")
         results = self.query_one("#results", ResultTextArea)
         results.highlight_summary = not raw

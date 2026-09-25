@@ -143,14 +143,15 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
                 {"routing": {"model": "english", "reason": "test", "repo": "example"},
                  "answers": {"urgency": {"type": "score", "score": 0.8,
                                          "probabilities": {"0": 0.2, "1": 0.8}}},
-                 "usage": {"input_tokens": 12}, "device": "cpu"},
+                 "usage": {"input_tokens": 12}, "device": "cpu", "response_time_ms": 12.345},
                 None,
                 {"urgency": {"type": "score", "instructions": "How urgent?",
                              "criteria": ["no rush", "urgent"]}},
             )
             text = app.query_one("#results", TextArea).text
             for expected in ("reason=test", "repo=example", "How urgent?",
-                             "1 — urgent  p=0.8000", "input_tokens", "device=cpu"):
+                             "1 — urgent  p=0.8000", "input_tokens", "device=cpu",
+                             "Response time: 12.345 ms"):
                 self.assertIn(expected, text)
 
     @patch("laya_tools.tui.write_system_clipboard", return_value=True)
@@ -228,6 +229,8 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(instances[-1].device, "cpu")
             self.assertEqual(len(app.history), 1)
+            self.assertGreaterEqual(app.history[0]["response_time_ms"], 0)
+            self.assertIn("Response time:", app.query_one("#results", TextArea).text)
             app.query_one("#custom-device", Input).value = "cuda:1"
             await pilot.click("#send")
             await pilot.pause()
@@ -235,6 +238,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(app.history), 2)
             app.query_one("#view", Select).value = "json"
             await pilot.pause()
+            self.assertIn('"response_time_ms"', app.query_one("#results", TextArea).text)
             self.assertIn("Done", str(app.query_one("#status").render()))
 
 
