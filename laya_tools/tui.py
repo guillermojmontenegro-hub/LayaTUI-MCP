@@ -116,21 +116,90 @@ def run_request(router, mode, state, questions, options):
     return router.predict(state, questions, **options)
 
 
-def answer_summary(result):
-    """A plain-text summary that can be selected and copied in the result field."""
-    rows = []
+def _display(value):
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _probability(value):
+    return f"{value:.4f}" if isinstance(value, (float, int)) and not isinstance(value, bool) else _display(value)
+
+
+def answer_summary(result, questions=None):
+    """Show every answer field and connect score indices to rubric descriptions."""
+    questions = questions if isinstance(questions, dict) else {}
+    rows = ["Answers:"]
     for name, answer in result.get("answers", {}).items():
-        if "choice" in answer:
-            choice = str(answer["choice"])
-            probability = answer.get("probabilities", {}).get(choice)
-            detail = "p=%.3f" % probability if isinstance(probability, (float, int)) else ""
-            rows.append(f"{name}: {choice}" + (f" ({detail})" if detail else ""))
-        elif "score" in answer:
-            rows.append(f"{name}: {answer['score']} (score)")
-        elif "noul" in answer:
-            rows.append(f"{name}: {answer['noul']:.3f} (probability of yes)")
-        else:
-            rows.append(f"{name}: {json.dumps(answer, ensure_ascii=False, default=str)}")
+        if not isinstance(answer, dict):
+            rows.append(f"  {name}: {_display(answer)}")
+            continue
+        spec = questions.get(name, {})
+        spec = spec if isinstance(spec, dict) else {}
+        kind = answer.get("type") or spec.get("type") or "unknown"
+        rows.append(f"  {name} [{kind}]")
+        if spec.get("instructions"):
+            rows.append(f"    Question: {spec['instructions']}")
+        used = {"type"}
+
+        if kind == "choice" and "choice" in answer:
+            chosen = str(answer["choice"])
+            criteria = spec.get("criteria") if isinstance(spec.get("criteria"), dict) else {}
+            probabilities = answer.get("probabilities") or {}
+            probabilities = probabilities if isinstance(probabilities, dict) else {}
+            description = criteria.get(chosen)
+            rows.append(f"    Selected: {chosen}" +
+                        (f" — {_display(description)}" if description not in (None, "") else ""))
+            labels = list(dict.fromkeys([*criteria, *probabilities]))
+            if labels:
+                rows.append("    Options:")
+                for label in labels:
+                    detail = criteria.get(label)
+                    label_text = f"{label}" + (f" — {_display(detail)}" if detail not in (None, "") else "")
+                    probability = (f"  p={_probability(probabilities[label])}"
+                                   if label in probabilities else "")
+                    rows.append(f"      {label_text}{probability}" + ("  ← selected" if label == chosen else ""))
+            used.update(("choice", "probabilities"))
+
+        elif kind == "score" and "score" in answer:
+            rubric = spec.get("criteria") if isinstance(spec.get("criteria"), list) else []
+            legend = answer.get("legend") if isinstance(answer.get("legend"), dict) else {}
+            probabilities = answer.get("probabilities") or {}
+            probabilities = probabilities if isinstance(probabilities, dict) else {}
+            levels = list(dict.fromkeys([*(str(i) for i in range(len(rubric))), *legend, *probabilities]))
+            rows.append(f"    Expected score: {_display(answer['score'])}" +
+                        (f" (0–{len(levels) - 1} scale)" if levels else ""))
+            if levels:
+                rows.append("    Rubric levels:")
+                for level in levels:
+                    description = legend.get(level)
+                    if description is None and level.isdigit() and int(level) < len(rubric):
+                        description = rubric[int(level)]
+                    detail = f" — {_display(description)}" if description not in (None, "") else ""
+                    probability = (f"  p={_probability(probabilities[level])}"
+                                   if level in probabilities else "")
+                    rows.append(f"      {level}{detail}{probability}")
+            used.update(("score", "legend", "probabilities"))
+
+        elif kind == "noul" and "noul" in answer:
+            value = answer["noul"]
+            rows.append(f"    P(true): {_probability(value)}")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                rows.append(f"    P(false): {_probability(1 - value)}")
+            criteria = spec.get("criteria") if isinstance(spec.get("criteria"), dict) else {}
+            labels = spec.get("labels") if isinstance(spec.get("labels"), dict) else {}
+            for key in ("false", "true"):
+                if key in criteria or key in labels:
+                    rows.append(f"    {key}: " +
+                                (f"{_display(labels[key])} — " if key in labels else "") +
+                                (_display(criteria[key]) if key in criteria else ""))
+            used.add("noul")
+
+        for key in ("confidence", "answer_confidence", "action"):
+            if key in answer:
+                rows.append(f"    {key}: {_display(answer[key])}")
+                used.add(key)
+        for key, value in answer.items():
+            if key not in used:
+                rows.append(f"    {key}: {_display(value)}")
     return "\n".join(rows)
 
 
@@ -199,6 +268,7 @@ class LayaTUI(App):
         self.router = None
         self.busy = False
         self.history = []
+        self.question_history = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -237,7 +307,7 @@ class LayaTUI(App):
                 yield TextArea(id="prompt")
                 yield ResizeHandle("prompt", id="resize-prompt")
                 with Horizontal(classes="field-heading"):
-                    yield Label("Questions JSON (choice, score, noul)")
+                    yield Label("Questions JSON (score: ordered levels)")
                     yield Button("Copy questions", id="copy-questions", classes="copy")
                 yield TextArea(json.dumps(PRESETS["router"](), ensure_ascii=False, indent=2),
                                language="json", id="questions")
@@ -326,17 +396,18 @@ class LayaTUI(App):
                 self._router_device = device
             result = run_request(self.router, mode, state, questions, options)
         except Exception as error:
-            self.call_from_thread(self.finish_request, None, str(error))
+            self.call_from_thread(self.finish_request, None, str(error), questions)
         else:
-            self.call_from_thread(self.finish_request, result, None)
+            self.call_from_thread(self.finish_request, result, None, questions)
 
-    def finish_request(self, result, error):
+    def finish_request(self, result, error, questions=None):
         self.busy = False
         self.query_one("#send", Button).disabled = False
         if error:
             self.set_status("Error: %s" % error)
             return
         self.history.append(result)
+        self.question_history.append(questions or {})
         self.show_history()
         self.set_status("Done. %d result(s)." % len(self.history))
 
@@ -349,20 +420,25 @@ class LayaTUI(App):
                 lines.append(json.dumps(result, ensure_ascii=False, indent=2, default=str))
                 lines.append("")
                 continue
-            routing = result.get("routing", {})
-            if routing:
-                lines.append("Model: %s | %s" % (routing.get("model", "?"), routing.get("reason", "")))
-                if routing.get("detection"):
-                    lines.append("Detection: %s" % json.dumps(routing["detection"], ensure_ascii=False, default=str))
+            routing = result.get("routing")
+            if isinstance(routing, dict) and routing:
+                lines.append("Routing:")
+                for key, value in routing.items():
+                    lines.append(f"  {key}: {_display(value)}")
             if result.get("answers"):
-                lines.append(answer_summary(result))
+                questions = self.question_history[index - 1] if index <= len(self.question_history) else {}
+                lines.append(answer_summary(result, questions))
             if result.get("usage"):
                 lines.append("Usage: %s" % json.dumps(result["usage"], ensure_ascii=False, default=str))
+            for key, value in result.items():
+                if key not in ("routing", "answers", "usage"):
+                    lines.append(f"{key}: {_display(value)}")
             lines.append("")
         self.query_one("#results", TextArea).text = "\n".join(lines).rstrip()
 
     def action_clear(self):
         self.history.clear()
+        self.question_history.clear()
         self.show_history()
         self.set_status("Results cleared.")
 

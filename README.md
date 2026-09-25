@@ -25,6 +25,8 @@ Copy writes to the desktop clipboard through `xclip` or `xsel` on X11, `wl-copy`
 
 The device selector supports CPU, CUDA, MPS, XPU, and a custom identifier such as `cuda:1`.
 
+For a `score` question, `criteria` is an **ordered list** of rubric levels. Index `0` is the first level. The result displays the probability of every level next to its description and reports `score` as the probability-weighted expected level, which may be fractional. The Summary view also includes the routing details, confidence values, action metadata, token usage, and any additional response fields. Raw JSON remains available from the Result view selector.
+
 The MCP server exposes `laya_status`, `laya_route`, `laya_predict`, `laya_preset`, `laya_shortlist`, and `laya_choose_action`, plus the `laya_agent_decisions` prompt. `laya_choose_action` accepts a goal, current observation, and candidate actions; it returns a choice without executing it. With more than 20 actions, it uses embeddings to shortlist them first. For reliable navigation decisions, set `LAYA_ACTION_MODEL` to a local checkpoint trained for the `next_action` schema. The general checkpoints have not been validated for this task.
 
 Set `LAYA_DEVICE=cpu` or `LAYA_DEVICE=cuda` to choose the MCP compute device. The server loads models on first use by default (`LAYA_PRELOAD=0`).

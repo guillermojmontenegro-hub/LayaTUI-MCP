@@ -6,10 +6,49 @@ from unittest.mock import patch
 
 from textual.widgets import Input, Select, TextArea
 from textual.events import MouseDown, MouseMove, MouseUp
-from laya_tools.tui import LayaTUI, ResizeHandle, prepare_request, run_request, write_system_clipboard
+from laya_tools.tui import LayaTUI, ResizeHandle, answer_summary, prepare_request, run_request, write_system_clipboard
 
 
 class RequestTests(unittest.TestCase):
+    def test_score_summary_shows_rubric_and_every_answer_field(self):
+        questions = {
+            "difficulty": {"type": "score", "instructions": "How hard is this?",
+                           "criteria": ["trivial", "moderate", "hard"]},
+            "domain": {"type": "choice", "instructions": "Which domain?",
+                       "criteria": {"code": "programming", "math": "calculation"}},
+            "needs_tools": {"type": "noul", "instructions": "Are tools needed?",
+                            "criteria": {"false": "local answer", "true": "external lookup"}},
+        }
+        result = {"answers": {
+            "difficulty": {"type": "score", "score": 1.25,
+                           "legend": {"0": "trivial", "1": "moderate", "2": "hard"},
+                           "probabilities": {"0": 0.1, "1": 0.55, "2": 0.35},
+                           "confidence": 0.32, "answer_confidence": 0.55,
+                           "action": {"act_probability": 0.9}},
+            "domain": {"type": "choice", "choice": "code",
+                       "probabilities": {"code": 0.8, "math": 0.2},
+                       "confidence": 0.7, "answer_confidence": 0.8},
+            "needs_tools": {"type": "noul", "noul": 0.75,
+                            "confidence": 0.75, "answer_confidence": 0.75},
+        }}
+        summary = answer_summary(result, questions)
+        for expected in ("Expected score: 1.25", "0 — trivial  p=0.1000",
+                         "1 — moderate  p=0.5500", "2 — hard  p=0.3500",
+                         "answer_confidence: 0.55", "act_probability", "programming",
+                         "calculation", "P(true): 0.7500", "P(false): 0.2500",
+                         "external lookup"):
+            self.assertIn(expected, summary)
+
+    def test_score_summary_uses_question_criteria_without_legend(self):
+        result = {"answers": {"severity": {"type": "score", "score": 0.4,
+                                          "probabilities": {"0": 0.6, "1": 0.4},
+                                          "extra_metric": "kept"}}}
+        questions = {"severity": {"type": "score", "criteria": ["low", "high"]}}
+        summary = answer_summary(result, questions)
+        self.assertIn("0 — low  p=0.6000", summary)
+        self.assertIn("1 — high  p=0.4000", summary)
+        self.assertIn("extra_metric: kept", summary)
+
     def test_desktop_clipboard_writer(self):
         with patch("laya_tools.tui.clipboard_commands", return_value=[("xclip", "-selection", "clipboard")]), \
              patch("laya_tools.tui.shutil.which", return_value="/usr/bin/xclip"), \
@@ -51,6 +90,23 @@ class RequestTests(unittest.TestCase):
 
 
 class AppTests(unittest.IsolatedAsyncioTestCase):
+    async def test_result_view_keeps_question_context_and_metadata(self):
+        app = LayaTUI()
+        async with app.run_test(size=(100, 30)):
+            app.finish_request(
+                {"routing": {"model": "english", "reason": "test", "repo": "example"},
+                 "answers": {"urgency": {"type": "score", "score": 0.8,
+                                         "probabilities": {"0": 0.2, "1": 0.8}}},
+                 "usage": {"input_tokens": 12}, "device": "cpu"},
+                None,
+                {"urgency": {"type": "score", "instructions": "How urgent?",
+                             "criteria": ["no rush", "urgent"]}},
+            )
+            text = app.query_one("#results", TextArea).text
+            for expected in ("reason: test", "repo: example", "How urgent?",
+                             "1 — urgent  p=0.8000", "input_tokens", "device: cpu"):
+                self.assertIn(expected, text)
+
     @patch("laya_tools.tui.write_system_clipboard", return_value=True)
     async def test_copy_paste_and_mouse_resize(self, system_copy):
         app = LayaTUI()
