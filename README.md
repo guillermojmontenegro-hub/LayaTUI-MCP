@@ -19,7 +19,9 @@ uv run laya-agent-mcp
 
 The MCP server uses stdio. An MCP client starts it as a subprocess; running it directly will not display a UI or a response. Laya model weights are downloaded the first time each model is used.
 
-The TUI accepts plain text or JSON state, supports built-in or custom questions, shows routing and answers, and can save the latest JSON result. Select text in **Prompt**, **Questions**, or **Result** and press `Ctrl+C` to copy it. Press `Ctrl+V` in Prompt or Questions to paste. `F7` selects the entire focused field, and each field has a button to copy all of its text. Result is read-only. Drag the separators below Prompt and Questions to resize those fields and the remaining Result area with the mouse. Clipboard integration depends on terminal support.
+The TUI accepts plain text or JSON state, supports built-in or custom questions, shows routing and answers, and can save the latest JSON result. Select text in **Prompt**, **Questions**, or **Result** and press `Ctrl+C` to copy it. Press `Ctrl+V` in Prompt or Questions to paste. `F7` selects the entire focused field, and each field has a button to copy all of its text. Result is read-only. Drag the separators below Prompt and Questions to resize those fields and the remaining Result area with the mouse.
+
+Copy writes to the desktop clipboard through `xclip` or `xsel` on X11, `wl-copy` on Wayland, and `pbcopy` on macOS. Install one of those utilities if needed. Textual's terminal clipboard sequence is also attempted; if no desktop clipboard writer succeeds, the TUI shows a warning instead of claiming the copy succeeded.
 
 The device selector supports CPU, CUDA, MPS, XPU, and a custom identifier such as `cuda:1`.
 

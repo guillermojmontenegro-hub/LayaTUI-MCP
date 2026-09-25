@@ -2,13 +2,22 @@
 
 import json
 import unittest
+from unittest.mock import patch
 
 from textual.widgets import Input, Select, TextArea
 from textual.events import MouseDown, MouseMove, MouseUp
-from laya_tools.tui import LayaTUI, ResizeHandle, prepare_request, run_request
+from laya_tools.tui import LayaTUI, ResizeHandle, prepare_request, run_request, write_system_clipboard
 
 
 class RequestTests(unittest.TestCase):
+    def test_desktop_clipboard_writer(self):
+        with patch("laya_tools.tui.clipboard_commands", return_value=[("xclip", "-selection", "clipboard")]), \
+             patch("laya_tools.tui.shutil.which", return_value="/usr/bin/xclip"), \
+             patch("laya_tools.tui.subprocess.run") as run:
+            self.assertTrue(write_system_clipboard("copied text"))
+        self.assertEqual(run.call_args.args[0], ("/usr/bin/xclip", "-selection", "clipboard"))
+        self.assertEqual(run.call_args.kwargs["input"], "copied text")
+
     def test_text_preset_and_options(self):
         questions = {"answer": {"type": "choice", "instructions": "Pick", "criteria": ["a", "b"]}}
         state, actual_questions, options = prepare_request(
@@ -42,7 +51,8 @@ class RequestTests(unittest.TestCase):
 
 
 class AppTests(unittest.IsolatedAsyncioTestCase):
-    async def test_copy_paste_and_mouse_resize(self):
+    @patch("laya_tools.tui.write_system_clipboard", return_value=True)
+    async def test_copy_paste_and_mouse_resize(self, system_copy):
         app = LayaTUI()
         async with app.run_test(size=(100, 38)) as pilot:
             prompt = app.query_one("#prompt", TextArea)
@@ -53,6 +63,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             prompt.text = "A prompt to copy"
             await pilot.click("#copy-prompt")
             self.assertEqual(app.clipboard, prompt.text)
+            system_copy.assert_called_with(prompt.text)
             questions.text = '{"question": "copy me"}'
             await pilot.click("#copy-questions")
             self.assertEqual(app.clipboard, questions.text)
@@ -66,6 +77,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             app.show_history()
             await pilot.click("#copy-results")
             self.assertEqual(app.clipboard, results.text)
+            system_copy.assert_called_with(results.text)
             results.focus()
             results.action_select_all()
             results.action_copy()

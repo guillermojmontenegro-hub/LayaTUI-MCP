@@ -2,7 +2,11 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -20,6 +24,35 @@ PRESET_STATE_KEYS = {
     "router": "request",
     "triage": "message",
 }
+
+
+def clipboard_commands():
+    """Available desktop clipboard writers, in session-preferred order."""
+    if sys.platform == "darwin":
+        return [("pbcopy",)]
+    if os.name == "nt":
+        return [("clip.exe",)]
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return [("wl-copy",), ("xclip", "-selection", "clipboard"), ("xsel", "--clipboard", "--input")]
+    if os.environ.get("DISPLAY"):
+        return [("xclip", "-selection", "clipboard"), ("xsel", "--clipboard", "--input"), ("wl-copy",)]
+    return []
+
+
+def write_system_clipboard(text: str) -> bool:
+    """Write to the OS clipboard without invoking a shell or exposing the text in argv."""
+    for command in clipboard_commands():
+        executable = shutil.which(command[0])
+        if executable is None:
+            continue
+        try:
+            subprocess.run((executable, *command[1:]), input=text, text=True,
+                           encoding="utf-8", stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=3, check=True)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        return True
+    return False
 
 
 def prepare_request(prompt, questions_text, preset, state_format, model, task, lang,
@@ -238,10 +271,21 @@ class LayaTUI(App):
     def copy_field(self, field_id: str) -> None:
         text = self.query_one(f"#{field_id}", TextArea).text
         if text:
-            self.copy_to_clipboard(text)
-            self.set_status(f"Copied {field_id} to clipboard.")
+            if self.copy_to_clipboard(text):
+                self.set_status(f"Copied {field_id} to system clipboard.")
+            else:
+                self.set_status("System clipboard unavailable; terminal copy was attempted.")
         else:
             self.set_status(f"{field_id.title()} is empty.")
+
+    def copy_to_clipboard(self, text: str) -> bool:
+        """Keep Textual's local/OSC 52 copy and also write the desktop clipboard."""
+        super().copy_to_clipboard(text)
+        copied = write_system_clipboard(text)
+        if not copied:
+            self.notify("System clipboard unavailable. Check terminal clipboard support.",
+                        severity="warning", timeout=5)
+        return copied
 
     def set_status(self, message):
         self.query_one("#status", Label).update(message)
