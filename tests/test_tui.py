@@ -6,7 +6,8 @@ from unittest.mock import patch
 
 from textual.widgets import Input, Select, TextArea
 from textual.events import MouseDown, MouseMove, MouseUp
-from laya_tools.tui import LayaTUI, ResizeHandle, answer_summary, prepare_request, run_request, write_system_clipboard
+from laya_tools.tui import (LayaTUI, ResizeHandle, ResultTextArea, answer_summary,
+                            prepare_request, run_request, write_system_clipboard)
 
 
 class RequestTests(unittest.TestCase):
@@ -93,6 +94,24 @@ class RequestTests(unittest.TestCase):
 
 
 class AppTests(unittest.IsolatedAsyncioTestCase):
+    async def test_selected_line_has_color_only_in_summary(self):
+        app = LayaTUI()
+        async with app.run_test(size=(100, 30)) as pilot:
+            app.finish_request({"answers": {"domain": {"type": "choice", "choice": "code"}}},
+                               None, {"domain": {"type": "choice", "instructions": "Pick a domain",
+                                                 "criteria": {"code": "programming"}}})
+            results = app.query_one("#results", ResultTextArea)
+            selected_index = results.text.splitlines().index("    Selected: code")
+            selected_line = results.get_line(selected_index)
+            self.assertEqual(selected_line.plain, "    Selected: code")
+            self.assertTrue(any("bold" in str(span.style) for span in selected_line.spans))
+
+            app.query_one("#view", Select).value = "json"
+            await pilot.pause()
+            self.assertFalse(results.highlight_selected)
+            self.assertTrue(all(not results.get_line(index).spans
+                                for index in range(len(results.text.splitlines()))))
+
     async def test_result_view_keeps_question_context_and_metadata(self):
         app = LayaTUI()
         async with app.run_test(size=(100, 30)):

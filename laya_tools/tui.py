@@ -239,6 +239,21 @@ class ResizeHandle(Static):
             event.stop()
 
 
+class ResultTextArea(TextArea):
+    """Color selected decisions while keeping the result selectable and copyable."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.highlight_selected = False
+
+    def get_line(self, line_index: int):
+        line = super().get_line(line_index)
+        if self.highlight_selected and line.plain.startswith("    Selected: "):
+            color = self.app.theme_variables.get("success", "#00af87")
+            line.stylize(f"bold {color}", 4, len(line))
+        return line
+
+
 class LayaTUI(App):
     """Interactive frontend for local Laya decisions."""
 
@@ -322,7 +337,7 @@ class LayaTUI(App):
                 with Horizontal(classes="field-heading"):
                     yield Label("Result (select text to copy)")
                     yield Button("Copy result", id="copy-results", classes="copy")
-                yield TextArea(id="results", read_only=True, show_line_numbers=False)
+                yield ResultTextArea(id="results", read_only=True, show_line_numbers=False)
         yield Footer()
 
     def on_select_changed(self, event: Select.Changed) -> None:
@@ -436,7 +451,9 @@ class LayaTUI(App):
                 lines.append("Meta: " + " | ".join(
                     f"{key}={_display(value)}" for key, value in metadata))
             lines.append("")
-        self.query_one("#results", TextArea).text = "\n".join(lines).rstrip()
+        results = self.query_one("#results", ResultTextArea)
+        results.highlight_selected = not raw
+        results.text = "\n".join(lines).rstrip()
 
     def action_clear(self):
         self.history.clear()
