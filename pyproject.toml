@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "laya-tui-mcp"
+version = "0.1.0"
+description = "Local TUI and agent-decision MCP tools for the PyPI Laya package"
+requires-python = ">=3.10"
+dependencies = ["laya[mcp]==0.3.20", "textual>=0.80.0"]
+
+[tool.setuptools.packages.find]
+include = ["laya_tools*"]
+
+[project.scripts]
+laya-tui = "laya_tools.tui:main"
+laya-agent-mcp = "laya_tools.agent_mcp:main"
