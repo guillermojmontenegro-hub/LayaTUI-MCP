@@ -51,7 +51,43 @@ class ActionTests(unittest.TestCase):
         with patch.object(agent_mcp, "_router_or_error", return_value=FakeRouter()):
             result = json.loads(agent_mcp.laya_choose_action_tool(
                 "Open result", "Result visible", self.actions))
-        self.assertEqual(result["action_id"], "click")
+        self.assertEqual(result, {"action_id": "click", "confidence": 0.78})
+
+    def test_mcp_decision_tools_return_only_selected_values(self):
+        full = json.dumps({"answers": {
+            "kind": {"type": "choice", "choice": "click", "answer_confidence": 0.8,
+                     "probabilities": {"click": 0.8, "done": 0.2}},
+            "priority": {"type": "score", "score": 1.25, "confidence": 0.6,
+                         "legend": {"0": "low", "1": "high"}},
+            "safe": {"type": "noul", "noul": 0.7, "confidence": 0.7},
+        }, "routing": {"model": "english"}, "latency_ms": 30, "device": "cpu"})
+        expected = {"answers": {"kind": {"choice": "click", "confidence": 0.8},
+                                 "priority": {"score": 1.25, "confidence": 0.6},
+                                 "safe": {"noul": 0.7}}}
+        with patch.object(agent_mcp, "upstream_predict_tool", return_value=full), \
+             patch.object(agent_mcp, "upstream_preset_tool", return_value=full):
+            self.assertEqual(json.loads(agent_mcp.laya_predict_tool({}, {})), expected)
+            self.assertEqual(json.loads(agent_mcp.laya_preset_tool("triage", {})), expected)
+
+    def test_mcp_route_and_status_are_compact(self):
+        with patch.object(agent_mcp, "upstream_route_tool", return_value=json.dumps({
+            "model": "english", "repo": "some/repo", "reason": "language"})), \
+             patch.object(agent_mcp, "upstream_status_tool", return_value=json.dumps({
+                 "device": "cpu", "device_is_preference": True, "torch_cuda": False,
+                 "loaded": [], "checkpoint_devices": {}, "package_versions": {"torch": "x"}})):
+            self.assertEqual(json.loads(agent_mcp.laya_route_tool({}, {})), {"model": "english"})
+            self.assertEqual(json.loads(agent_mcp.laya_status_tool()), {
+                "device": "cpu", "device_is_preference": True, "torch_cuda": False,
+                "loaded": [], "checkpoint_devices": {}})
+
+    def test_mcp_shortlist_returns_only_decision(self):
+        raw = json.dumps({"answers": {"next": {"choice": "click", "answer_confidence": 0.9,
+                                                   "probabilities": {"click": 0.9}}},
+                          "shortlist": {"next": {"n": 50}}, "routing": {"model": "english"}})
+        with patch.object(agent_mcp, "_router_or_error", return_value=FakeRouter()), \
+             patch.object(agent_mcp, "_wrap", return_value=raw):
+            result = json.loads(agent_mcp.laya_shortlist_tool({}, {}))
+        self.assertEqual(result, {"answers": {"next": {"choice": "click", "confidence": 0.9}}})
 
     def test_tool_registration(self):
         names = {tool.name for tool in asyncio.run(server.list_tools())}

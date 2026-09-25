@@ -117,7 +117,8 @@ def run_request(router, mode, state, questions, options):
 
 
 def _display(value):
-    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str,
+                                                           separators=(",", ":"))
 
 
 def _probability(value):
@@ -125,38 +126,37 @@ def _probability(value):
 
 
 def answer_summary(result, questions=None):
-    """Show every answer field and connect score indices to rubric descriptions."""
+    """Keep typed answers complete in a few selectable text lines per question."""
     questions = questions if isinstance(questions, dict) else {}
-    rows = ["Answers:"]
+    rows = []
     for name, answer in result.get("answers", {}).items():
         if not isinstance(answer, dict):
-            rows.append(f"  {name}: {_display(answer)}")
+            rows.append(f"{name}: {_display(answer)}")
             continue
         spec = questions.get(name, {})
         spec = spec if isinstance(spec, dict) else {}
         kind = answer.get("type") or spec.get("type") or "unknown"
-        rows.append(f"  {name} [{kind}]")
+        heading = f"{name} [{kind}]"
         if spec.get("instructions"):
-            rows.append(f"    Question: {spec['instructions']}")
+            heading += f" — {spec['instructions']}"
+        rows.append(heading)
         used = {"type"}
+        values = []
+        options = []
 
         if kind == "choice" and "choice" in answer:
             chosen = str(answer["choice"])
             criteria = spec.get("criteria") if isinstance(spec.get("criteria"), dict) else {}
             probabilities = answer.get("probabilities") or {}
             probabilities = probabilities if isinstance(probabilities, dict) else {}
-            description = criteria.get(chosen)
-            rows.append(f"    Selected: {chosen}" +
-                        (f" — {_display(description)}" if description not in (None, "") else ""))
+            values.append(f"choice={chosen}")
             labels = list(dict.fromkeys([*criteria, *probabilities]))
-            if labels:
-                rows.append("    Options:")
-                for label in labels:
-                    detail = criteria.get(label)
-                    label_text = f"{label}" + (f" — {_display(detail)}" if detail not in (None, "") else "")
-                    probability = (f"  p={_probability(probabilities[label])}"
-                                   if label in probabilities else "")
-                    rows.append(f"      {label_text}{probability}" + ("  ← selected" if label == chosen else ""))
+            for label in labels:
+                detail = criteria.get(label)
+                option = f"{label}" + (f" ({_display(detail)})" if detail not in (None, "") else "")
+                if label in probabilities:
+                    option += f"={_probability(probabilities[label])}"
+                options.append(("*" if label == chosen else "") + option)
             used.update(("choice", "probabilities"))
 
         elif kind == "score" and "score" in answer:
@@ -165,41 +165,46 @@ def answer_summary(result, questions=None):
             probabilities = answer.get("probabilities") or {}
             probabilities = probabilities if isinstance(probabilities, dict) else {}
             levels = list(dict.fromkeys([*(str(i) for i in range(len(rubric))), *legend, *probabilities]))
-            rows.append(f"    Expected score: {_display(answer['score'])}" +
-                        (f" (0–{len(levels) - 1} scale)" if levels else ""))
-            if levels:
-                rows.append("    Rubric levels:")
-                for level in levels:
-                    description = legend.get(level)
-                    if description is None and level.isdigit() and int(level) < len(rubric):
-                        description = rubric[int(level)]
-                    detail = f" — {_display(description)}" if description not in (None, "") else ""
-                    probability = (f"  p={_probability(probabilities[level])}"
-                                   if level in probabilities else "")
-                    rows.append(f"      {level}{detail}{probability}")
+            values.append(f"score={_display(answer['score'])}" +
+                          (f" (0–{len(levels) - 1})" if levels else ""))
+            for level in levels:
+                description = legend.get(level)
+                if description is None and level.isdigit() and int(level) < len(rubric):
+                    description = rubric[int(level)]
+                option = f"{level}" + (f" ({_display(description)})" if description not in (None, "") else "")
+                if level in probabilities:
+                    option += f"={_probability(probabilities[level])}"
+                options.append(option)
             used.update(("score", "legend", "probabilities"))
 
         elif kind == "noul" and "noul" in answer:
             value = answer["noul"]
-            rows.append(f"    P(true): {_probability(value)}")
+            values.append(f"P(true)={_probability(value)}")
             if isinstance(value, (int, float)) and not isinstance(value, bool):
-                rows.append(f"    P(false): {_probability(1 - value)}")
+                values.append(f"P(false)={_probability(1 - value)}")
             criteria = spec.get("criteria") if isinstance(spec.get("criteria"), dict) else {}
             labels = spec.get("labels") if isinstance(spec.get("labels"), dict) else {}
             for key in ("false", "true"):
                 if key in criteria or key in labels:
-                    rows.append(f"    {key}: " +
-                                (f"{_display(labels[key])} — " if key in labels else "") +
-                                (_display(criteria[key]) if key in criteria else ""))
+                    option = key
+                    if key in labels:
+                        option += f" ({_display(labels[key])})"
+                    if key in criteria:
+                        option += f": {_display(criteria[key])}"
+                    options.append(option)
             used.add("noul")
 
         for key in ("confidence", "answer_confidence", "action"):
             if key in answer:
-                rows.append(f"    {key}: {_display(answer[key])}")
+                values.append(f"{key}={_display(answer[key])}")
                 used.add(key)
         for key, value in answer.items():
             if key not in used:
-                rows.append(f"    {key}: {_display(value)}")
+                values.append(f"{key}={_display(value)}")
+        if values:
+            rows.append("  " + " | ".join(values))
+        if options:
+            rows.append("  " + " · ".join(options))
     return "\n".join(rows)
 
 
@@ -422,17 +427,16 @@ class LayaTUI(App):
                 continue
             routing = result.get("routing")
             if isinstance(routing, dict) and routing:
-                lines.append("Routing:")
-                for key, value in routing.items():
-                    lines.append(f"  {key}: {_display(value)}")
+                lines.append("Routing: " + " | ".join(
+                    f"{key}={_display(value)}" for key, value in routing.items()))
             if result.get("answers"):
                 questions = self.question_history[index - 1] if index <= len(self.question_history) else {}
                 lines.append(answer_summary(result, questions))
-            if result.get("usage"):
-                lines.append("Usage: %s" % json.dumps(result["usage"], ensure_ascii=False, default=str))
-            for key, value in result.items():
-                if key not in ("routing", "answers", "usage"):
-                    lines.append(f"{key}: {_display(value)}")
+            metadata = [(key, value) for key, value in result.items()
+                        if key not in ("routing", "answers")]
+            if metadata:
+                lines.append("Meta: " + " | ".join(
+                    f"{key}={_display(value)}" for key, value in metadata))
             lines.append("")
         self.query_one("#results", TextArea).text = "\n".join(lines).rstrip()
 

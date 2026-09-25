@@ -32,10 +32,10 @@ class RequestTests(unittest.TestCase):
                             "confidence": 0.75, "answer_confidence": 0.75},
         }}
         summary = answer_summary(result, questions)
-        for expected in ("Expected score: 1.25", "0 — trivial  p=0.1000",
-                         "1 — moderate  p=0.5500", "2 — hard  p=0.3500",
-                         "answer_confidence: 0.55", "act_probability", "programming",
-                         "calculation", "P(true): 0.7500", "P(false): 0.2500",
+        for expected in ("score=1.25", "0 (trivial)=0.1000",
+                         "1 (moderate)=0.5500", "2 (hard)=0.3500",
+                         "answer_confidence=0.55", "act_probability", "programming",
+                         "calculation", "P(true)=0.7500", "P(false)=0.2500",
                          "external lookup"):
             self.assertIn(expected, summary)
 
@@ -45,9 +45,9 @@ class RequestTests(unittest.TestCase):
                                           "extra_metric": "kept"}}}
         questions = {"severity": {"type": "score", "criteria": ["low", "high"]}}
         summary = answer_summary(result, questions)
-        self.assertIn("0 — low  p=0.6000", summary)
-        self.assertIn("1 — high  p=0.4000", summary)
-        self.assertIn("extra_metric: kept", summary)
+        self.assertIn("0 (low)=0.6000", summary)
+        self.assertIn("1 (high)=0.4000", summary)
+        self.assertIn("extra_metric=kept", summary)
 
     def test_desktop_clipboard_writer(self):
         with patch("laya_tools.tui.clipboard_commands", return_value=[("xclip", "-selection", "clipboard")]), \
@@ -103,8 +103,8 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
                              "criteria": ["no rush", "urgent"]}},
             )
             text = app.query_one("#results", TextArea).text
-            for expected in ("reason: test", "repo: example", "How urgent?",
-                             "1 — urgent  p=0.8000", "input_tokens", "device: cpu"):
+            for expected in ("reason=test", "repo=example", "How urgent?",
+                             "1 (urgent)=0.8000", "input_tokens", "device=cpu"):
                 self.assertIn(expected, text)
 
     @patch("laya_tools.tui.write_system_clipboard", return_value=True)
