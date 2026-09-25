@@ -4,7 +4,8 @@ import json
 import unittest
 
 from textual.widgets import Input, Select, TextArea
-from laya_tools.tui import LayaTUI, prepare_request, run_request
+from textual.events import MouseDown, MouseMove, MouseUp
+from laya_tools.tui import LayaTUI, ResizeHandle, prepare_request, run_request
 
 
 class RequestTests(unittest.TestCase):
@@ -41,6 +42,55 @@ class RequestTests(unittest.TestCase):
 
 
 class AppTests(unittest.IsolatedAsyncioTestCase):
+    async def test_copy_paste_and_mouse_resize(self):
+        app = LayaTUI()
+        async with app.run_test(size=(100, 38)) as pilot:
+            prompt = app.query_one("#prompt", TextArea)
+            questions = app.query_one("#questions", TextArea)
+            results = app.query_one("#results", TextArea)
+            self.assertTrue(results.read_only)
+
+            prompt.text = "A prompt to copy"
+            await pilot.click("#copy-prompt")
+            self.assertEqual(app.clipboard, prompt.text)
+            questions.text = '{"question": "copy me"}'
+            await pilot.click("#copy-questions")
+            self.assertEqual(app.clipboard, questions.text)
+            app.copy_to_clipboard(" pasted")
+            prompt.focus()
+            prompt.move_cursor((0, len(prompt.text)))
+            await pilot.press("ctrl+v")
+            self.assertEqual(prompt.text, "A prompt to copy pasted")
+
+            app.history = [{"answers": {"decision": {"choice": "yes"}}}]
+            app.show_history()
+            await pilot.click("#copy-results")
+            self.assertEqual(app.clipboard, results.text)
+            results.focus()
+            results.action_select_all()
+            results.action_copy()
+            self.assertEqual(app.clipboard, results.text)
+
+            handle = app.query_one("#resize-prompt", ResizeHandle)
+            original_height = prompt.outer_size.height
+            def mouse(event_type, y):
+                return event_type(handle, 0, 0, 0, 0, 1, False, False, False, screen_y=y)
+            handle.on_mouse_down(mouse(MouseDown, 10))
+            handle.on_mouse_move(mouse(MouseMove, 12))
+            await pilot.pause()
+            self.assertEqual(prompt.outer_size.height, original_height + 2)
+            handle.on_mouse_up(mouse(MouseUp, 12))
+
+            handle = app.query_one("#resize-questions", ResizeHandle)
+            original_questions = questions.outer_size.height
+            original_results = results.outer_size.height
+            handle.on_mouse_down(mouse(MouseDown, 20))
+            handle.on_mouse_move(mouse(MouseMove, 22))
+            await pilot.pause()
+            self.assertEqual(questions.outer_size.height, original_questions + 2)
+            self.assertEqual(results.outer_size.height, original_results - 2)
+            handle.on_mouse_up(mouse(MouseUp, 22))
+
     async def test_cpu_gpu_and_result_flow(self):
         instances = []
 
@@ -57,6 +107,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
 
         app = LayaTUI(router_factory=Router)
         async with app.run_test(size=(100, 30)) as pilot:
+            self.assertGreaterEqual(app.query_one("#results", TextArea).outer_size.height, 3)
             app.query_one("#prompt", TextArea).text = "hello"
             app.query_one("#device", Select).value = "cpu"
             await pilot.click("#send")

@@ -4,11 +4,11 @@ import argparse
 import json
 from pathlib import Path
 
-from rich.table import Table
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Select, TextArea
+from textual.events import MouseDown, MouseMove, MouseUp
+from textual.widgets import Button, Footer, Header, Input, Label, Select, Static, TextArea
 
 from laya import DEFAULT_MODELS, Router
 from laya.cli import PRESETS
@@ -84,24 +84,54 @@ def run_request(router, mode, state, questions, options):
 
 
 def answer_summary(result):
-    """A readable table while retaining raw results for inspection and export."""
-    rows = Table(title="Answers", expand=True)
-    rows.add_column("Question")
-    rows.add_column("Answer")
-    rows.add_column("Details")
+    """A plain-text summary that can be selected and copied in the result field."""
+    rows = []
     for name, answer in result.get("answers", {}).items():
         if "choice" in answer:
             choice = str(answer["choice"])
             probability = answer.get("probabilities", {}).get(choice)
             detail = "p=%.3f" % probability if isinstance(probability, (float, int)) else ""
-            rows.add_row(name, choice, detail)
+            rows.append(f"{name}: {choice}" + (f" ({detail})" if detail else ""))
         elif "score" in answer:
-            rows.add_row(name, str(answer["score"]), "score")
+            rows.append(f"{name}: {answer['score']} (score)")
         elif "noul" in answer:
-            rows.add_row(name, "%.3f" % answer["noul"], "probability of yes")
+            rows.append(f"{name}: {answer['noul']:.3f} (probability of yes)")
         else:
-            rows.add_row(name, json.dumps(answer, ensure_ascii=False, default=str), "")
-    return rows
+            rows.append(f"{name}: {json.dumps(answer, ensure_ascii=False, default=str)}")
+    return "\n".join(rows)
+
+
+class ResizeHandle(Static):
+    """Drag to change a text field's height while keeping room for results."""
+
+    def __init__(self, target_id: str, **kwargs):
+        super().__init__("↕ Drag to resize", **kwargs)
+        self.target_id = target_id
+        self._drag_start = None
+
+    def on_mouse_down(self, event: MouseDown) -> None:
+        if event.button != 1:
+            return
+        target = self.app.query_one(f"#{self.target_id}", TextArea)
+        results = self.app.query_one("#results", TextArea)
+        self._drag_start = (event.screen_y, target.outer_size.height, results.outer_size.height)
+        self.capture_mouse()
+        event.stop()
+
+    def on_mouse_move(self, event: MouseMove) -> None:
+        if self._drag_start is None:
+            return
+        start_y, start_height, results_height = self._drag_start
+        delta = round(event.screen_y - start_y)
+        height = max(3, min(start_height + delta, start_height + max(0, results_height - 3)))
+        self.app.query_one(f"#{self.target_id}", TextArea).styles.height = height
+        event.stop()
+
+    def on_mouse_up(self, event: MouseUp) -> None:
+        if self._drag_start is not None:
+            self._drag_start = None
+            self.release_mouse()
+            event.stop()
 
 
 class LayaTUI(App):
@@ -119,11 +149,14 @@ class LayaTUI(App):
     #prompt { height: 5; border: round $primary; }
     #questions { height: 6; border: round $primary; }
     #results { height: 1fr; min-height: 3; border: round $primary; }
+    ResizeHandle { height: 1; text-align: center; color: $text-muted; pointer: ns-resize; }
     #status { height: 1; color: $accent; }
     #buttons { height: 3; }
     #buttons Button { margin-right: 1; }
     #file-buttons { height: 3; }
     #file-buttons Button { margin-right: 1; }
+    #main Button.copy { min-width: 17; height: 1; min-height: 1; border: none; padding: 0 1; margin-left: 1; }
+    #main .field-heading { height: 1; align: left middle; }
     Input, Select { margin-bottom: 1; }
     """
 
@@ -165,16 +198,25 @@ class LayaTUI(App):
                 yield Label("Result view", classes="caption")
                 yield Select([("Summary", "summary"), ("Raw JSON", "json")], value="summary", id="view")
             with Vertical(id="main"):
-                yield Label("Prompt or JSON state", classes="caption")
+                with Horizontal(classes="field-heading"):
+                    yield Label("Prompt or JSON state")
+                    yield Button("Copy prompt", id="copy-prompt", classes="copy")
                 yield TextArea(id="prompt")
-                yield Label("Questions JSON (choice, score, noul)", classes="caption")
+                yield ResizeHandle("prompt", id="resize-prompt")
+                with Horizontal(classes="field-heading"):
+                    yield Label("Questions JSON (choice, score, noul)")
+                    yield Button("Copy questions", id="copy-questions", classes="copy")
                 yield TextArea(json.dumps(PRESETS["router"](), ensure_ascii=False, indent=2),
                                language="json", id="questions")
+                yield ResizeHandle("questions", id="resize-questions")
                 with Horizontal(id="buttons"):
                     yield Button("Send  Ctrl+Enter", variant="primary", id="send")
                     yield Button("Clear results", id="clear")
                 yield Label("Ready", id="status")
-                yield RichLog(id="results", wrap=True, markup=True, auto_scroll=True)
+                with Horizontal(classes="field-heading"):
+                    yield Label("Result (select text to copy)")
+                    yield Button("Copy result", id="copy-results", classes="copy")
+                yield TextArea(id="results", read_only=True, show_line_numbers=False)
         yield Footer()
 
     def on_select_changed(self, event: Select.Changed) -> None:
@@ -190,6 +232,16 @@ class LayaTUI(App):
         action = actions.get(event.button.id)
         if action:
             action()
+        elif event.button.id and event.button.id.startswith("copy-"):
+            self.copy_field(event.button.id.removeprefix("copy-"))
+
+    def copy_field(self, field_id: str) -> None:
+        text = self.query_one(f"#{field_id}", TextArea).text
+        if text:
+            self.copy_to_clipboard(text)
+            self.set_status(f"Copied {field_id} to clipboard.")
+        else:
+            self.set_status(f"{field_id.title()} is empty.")
 
     def set_status(self, message):
         self.query_one("#status", Label).update(message)
@@ -245,23 +297,25 @@ class LayaTUI(App):
         self.set_status("Done. %d result(s)." % len(self.history))
 
     def show_history(self):
-        log = self.query_one("#results", RichLog)
-        log.clear()
+        lines = []
         raw = self.query_one("#view", Select).value == "json"
         for index, result in enumerate(self.history, 1):
-            log.write("[bold]Result %d[/bold]" % index)
+            lines.append("Result %d" % index)
             if raw:
-                log.write(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+                lines.append(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+                lines.append("")
                 continue
             routing = result.get("routing", {})
             if routing:
-                log.write("Model: %s | %s" % (routing.get("model", "?"), routing.get("reason", "")))
+                lines.append("Model: %s | %s" % (routing.get("model", "?"), routing.get("reason", "")))
                 if routing.get("detection"):
-                    log.write("Detection: %s" % json.dumps(routing["detection"], ensure_ascii=False, default=str))
+                    lines.append("Detection: %s" % json.dumps(routing["detection"], ensure_ascii=False, default=str))
             if result.get("answers"):
-                log.write(answer_summary(result))
+                lines.append(answer_summary(result))
             if result.get("usage"):
-                log.write("Usage: %s" % json.dumps(result["usage"], ensure_ascii=False, default=str))
+                lines.append("Usage: %s" % json.dumps(result["usage"], ensure_ascii=False, default=str))
+            lines.append("")
+        self.query_one("#results", TextArea).text = "\n".join(lines).rstrip()
 
     def action_clear(self):
         self.history.clear()

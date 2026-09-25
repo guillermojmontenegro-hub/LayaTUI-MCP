@@ -1,53 +1,35 @@
 # LayaTUI-MCP
 
-TUI y servidor MCP para [Laya](https://pypi.org/project/laya/). El proyecto instala
-`laya==0.3.20` desde PyPI; no necesita clonar el repositorio de Laya.
+A terminal UI and an MCP server for [Laya](https://pypi.org/project/laya/). This project installs `laya==0.3.20` from PyPI; it does not require a checkout of Laya's upstream repository.
 
-## Inicio rápido
+## Quick start
 
-Instalá [uv](https://docs.astral.sh/uv/getting-started/installation/), cloná este
-repositorio y ejecutá desde su raíz:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), clone this repository, and run these commands from its root:
 
 ```bash
 uv sync --frozen
 uv run laya-tui
 ```
 
-`uv` crea y administra el entorno virtual automáticamente. Después del primer
-`uv sync`, alcanza con `uv run laya-tui`. Para iniciar el MCP manualmente:
+`uv` creates and manages the virtual environment. After the first sync, `uv run laya-tui` is enough. To launch the MCP server manually:
 
 ```bash
 uv run laya-agent-mcp
 ```
 
-El MCP habla por stdio: cuando lo usa un cliente, ese cliente inicia el proceso.
-No imprime una interfaz ni una respuesta en la terminal. Los pesos de Laya se
-descargan al primer uso de cada modelo.
+The MCP server uses stdio. An MCP client starts it as a subprocess; running it directly will not display a UI or a response. Laya model weights are downloaded the first time each model is used.
 
-La TUI permite enviar texto o estado JSON, elegir preguntas predefinidas o
-personalizadas, inspeccionar rutas, ver respuestas resumidas o JSON y guardar
-el último resultado. Su selector de dispositivo admite CPU, CUDA, MPS, XPU y
-un identificador personalizado como `cuda:1`.
+The TUI accepts plain text or JSON state, supports built-in or custom questions, shows routing and answers, and can save the latest JSON result. Select text in **Prompt**, **Questions**, or **Result** and press `Ctrl+C` to copy it. Press `Ctrl+V` in Prompt or Questions to paste. `F7` selects the entire focused field, and each field has a button to copy all of its text. Result is read-only. Drag the separators below Prompt and Questions to resize those fields and the remaining Result area with the mouse. Clipboard integration depends on terminal support.
 
-El MCP ofrece `laya_status`, `laya_route`, `laya_predict`, `laya_preset`,
-`laya_shortlist` y `laya_choose_action`, además del prompt
-`laya_agent_decisions`. `laya_choose_action` recibe un objetivo, la observación
-actual y acciones candidatas; devuelve la acción elegida sin ejecutarla. Si
-hay más de 20 acciones, primero reduce las opciones con embeddings. Para
-decisiones de navegación confiables, configurá `LAYA_ACTION_MODEL` con un
-checkpoint local entrenado para el esquema `next_action`; los checkpoints
-generales todavía no están validados para esa tarea.
+The device selector supports CPU, CUDA, MPS, XPU, and a custom identifier such as `cuda:1`.
 
-El servidor usa `LAYA_DEVICE=cpu` o `LAYA_DEVICE=cuda` para elegir dispositivo.
-Carga los modelos al primer uso por defecto (`LAYA_PRELOAD=0`).
+The MCP server exposes `laya_status`, `laya_route`, `laya_predict`, `laya_preset`, `laya_shortlist`, and `laya_choose_action`, plus the `laya_agent_decisions` prompt. `laya_choose_action` accepts a goal, current observation, and candidate actions; it returns a choice without executing it. With more than 20 actions, it uses embeddings to shortlist them first. For reliable navigation decisions, set `LAYA_ACTION_MODEL` to a local checkpoint trained for the `next_action` schema. The general checkpoints have not been validated for this task.
 
-## Conectar el MCP a un agente
+Set `LAYA_DEVICE=cpu` or `LAYA_DEVICE=cuda` to choose the MCP compute device. The server loads models on first use by default (`LAYA_PRELOAD=0`).
 
-Primero ejecutá `uv sync --frozen` desde la raíz del repositorio. En los
-ejemplos, reemplazá `/RUTA/ABSOLUTA/LayaTUI-MCP` por el resultado de `pwd` y
-`/RUTA/ABSOLUTA/uv` por el resultado de `command -v uv`. Los clientes MCP
-pueden iniciarse desde cualquier directorio: `uv --directory` selecciona este
-proyecto. Usamos `--frozen` para respetar el `uv.lock` incluido.
+## Connect the MCP server to an agent
+
+Run `uv sync --frozen` from the repository root before configuring a client. In the examples below, replace `/ABSOLUTE/PATH/LayaTUI-MCP` with the output of `pwd` and `/ABSOLUTE/PATH/uv` with the output of `command -v uv`. Clients can start the MCP server from any directory: `uv --directory` selects this project. `--frozen` uses the included `uv.lock`.
 
 ### Claude Code
 
@@ -58,9 +40,7 @@ claude mcp add --scope user laya -- "$UV" --directory "$REPO" run --frozen laya-
 claude mcp list
 ```
 
-`--scope user` lo deja disponible en todos los proyectos. Para limitarlo al
-proyecto actual, cambiá `user` por `project`. [Documentación de Claude
-Code](https://code.claude.com/docs/en/mcp).
+User scope makes the server available across projects. Use `--scope project` for project scope. [Claude Code documentation](https://code.claude.com/docs/en/mcp).
 
 ### Codex
 
@@ -71,68 +51,55 @@ codex mcp add laya -- "$UV" --directory "$REPO" run --frozen laya-agent-mcp
 codex mcp list
 ```
 
-Codex guarda la conexión en `~/.codex/config.toml`. [Documentación oficial de
-OpenAI](https://developers.openai.com/codex/mcp).
+Codex stores the connection in `~/.codex/config.toml`. [Official OpenAI documentation](https://developers.openai.com/codex/mcp).
 
 ### OpenCode
 
-En `~/.config/opencode/opencode.json`, agregá la entrada `laya` al objeto `mcp`
-existente. Para OpenCode clásico:
+Add the `laya` entry to the existing `mcp` object in `~/.config/opencode/opencode.json`. For classic OpenCode:
 
 ```json
 {
   "mcp": {
     "laya": {
       "type": "local",
-      "command": ["/RUTA/ABSOLUTA/uv", "--directory", "/RUTA/ABSOLUTA/LayaTUI-MCP", "run", "--frozen", "laya-agent-mcp"],
+      "command": ["/ABSOLUTE/PATH/uv", "--directory", "/ABSOLUTE/PATH/LayaTUI-MCP", "run", "--frozen", "laya-agent-mcp"],
       "enabled": true
     }
   }
 }
 ```
 
-En OpenCode V2, la misma entrada va dentro de `mcp.servers` y se omite
-`enabled`. Verificá con `opencode mcp list` (o `opencode2 mcp list` en V2).
-[Documentación de OpenCode](https://opencode.ai/docs/mcp-servers/) y
-[OpenCode V2](https://dev.opencode.ai/v2/docs/mcp-servers/).
+In OpenCode V2, place the same entry under `mcp.servers` and omit `enabled`. Verify with `opencode mcp list` (or `opencode2 mcp list` for V2). [OpenCode documentation](https://opencode.ai/docs/mcp-servers/) and [OpenCode V2 documentation](https://dev.opencode.ai/v2/docs/mcp-servers/).
 
 ### Hermes Agent
 
-En `~/.hermes/config.yaml`, agregá la entrada a `mcp_servers`:
+Add the entry under `mcp_servers` in `~/.hermes/config.yaml`:
 
 ```yaml
 mcp_servers:
   laya:
-    command: /RUTA/ABSOLUTA/uv
-    args: ["--directory", "/RUTA/ABSOLUTA/LayaTUI-MCP", "run", "--frozen", "laya-agent-mcp"]
+    command: /ABSOLUTE/PATH/uv
+    args: ["--directory", "/ABSOLUTE/PATH/LayaTUI-MCP", "run", "--frozen", "laya-agent-mcp"]
     connect_timeout: 60
 ```
 
-Verificá con `hermes mcp test laya`. [Referencia de Hermes
-Agent](https://hermes-agent.nousresearch.com/docs/reference/mcp-config-reference).
+Verify with `hermes mcp test laya`. [Hermes Agent reference](https://hermes-agent.nousresearch.com/docs/reference/mcp-config-reference).
 
-### LM Studio y clientes compatibles con `mcp.json`
+### LM Studio and other `mcp.json` clients
 
-En LM Studio, abrí **Program → Install → Edit mcp.json** y agregá `laya` al
-objeto `mcpServers` existente:
+In LM Studio, open **Program → Install → Edit mcp.json** and add `laya` to the existing `mcpServers` object:
 
 ```json
 {
   "mcpServers": {
     "laya": {
-      "command": "/RUTA/ABSOLUTA/uv",
-      "args": ["--directory", "/RUTA/ABSOLUTA/LayaTUI-MCP", "run", "--frozen", "laya-agent-mcp"]
+      "command": "/ABSOLUTE/PATH/uv",
+      "args": ["--directory", "/ABSOLUTE/PATH/LayaTUI-MCP", "run", "--frozen", "laya-agent-mcp"]
     }
   }
 }
 ```
 
-Este formato también sirve como base para Cursor y otros clientes que usan
-`mcpServers`. [Documentación de LM Studio](https://lmstudio.ai/docs/app/mcp).
+This format is also a starting point for Cursor and other clients that use `mcpServers`. [LM Studio documentation](https://lmstudio.ai/docs/app/mcp).
 
-Para que el modelo consulte Laya al decidir entre acciones visibles, podés
-darle esta instrucción en tu agente: “Cuando tengas varias acciones concretas
-de navegación o uso de computadora, inspeccioná primero la pantalla y llamá a
-`laya_choose_action` con el objetivo, la observación y las acciones con IDs
-únicos. Ejecutá la acción elegida con tu herramienta habitual”. Laya toma la
-decisión; no navega ni ve píxeles por sí mismo.
+To encourage an agent to consult Laya when choosing among visible actions, give it an instruction such as: “When several concrete browser or computer actions are available, inspect the screen first and call `laya_choose_action` with the goal, observation, and actions with unique IDs. Execute the chosen action with your normal browser or computer tool.” Laya makes the choice; it does not navigate or inspect image pixels itself.
